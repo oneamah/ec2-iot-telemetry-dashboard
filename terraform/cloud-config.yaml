@@ -1,0 +1,209 @@
+#cloud-config
+package_update: true
+packages:
+  - python3
+  - awscli
+
+bootcmd:
+  - mkdir -p /opt/ec2-iot
+
+write_files:
+  - path: /opt/ec2-iot/publish_metrics.py
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env python3
+      import json
+      import os
+      import pathlib
+      import shutil
+      import subprocess
+      import time
+      import urllib.error
+      import urllib.request
+      from datetime import datetime, timezone
+
+      IOT_DATA_ENDPOINT = "${iot_data_endpoint}"
+      AWS_REGION = "${aws_region}"
+      IOT_TOPIC = "${iot_topic}"
+      THING_NAME = "${thing_name}"
+      PAYLOAD_PATH = pathlib.Path("/opt/ec2-iot/metrics.json")
+
+
+      def get_imds_token():
+          request = urllib.request.Request(
+              "http://169.254.169.254/latest/api/token",
+              method="PUT",
+              headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
+          )
+          with urllib.request.urlopen(request, timeout=2) as response:
+              return response.read().decode()
+
+
+      def get_metadata(path):
+          token = get_imds_token()
+          request = urllib.request.Request(
+              f"http://169.254.169.254/latest/meta-data/{path}",
+              headers={"X-aws-ec2-metadata-token": token},
+          )
+          with urllib.request.urlopen(request, timeout=2) as response:
+              return response.read().decode()
+
+
+      def cpu_percent(sample_seconds=1.0):
+          def read_cpu_times():
+              with open("/proc/stat", "r", encoding="utf-8") as cpu_file:
+                  parts = cpu_file.readline().split()[1:]
+              values = [int(value) for value in parts]
+              idle = values[3] + values[4]
+              total = sum(values)
+              return idle, total
+
+          idle_1, total_1 = read_cpu_times()
+          time.sleep(sample_seconds)
+          idle_2, total_2 = read_cpu_times()
+          idle_delta = idle_2 - idle_1
+          total_delta = total_2 - total_1
+          if total_delta <= 0:
+              return 0.0
+          return round((1 - (idle_delta / total_delta)) * 100, 2)
+
+
+      def memory_stats():
+          values = {}
+          with open("/proc/meminfo", "r", encoding="utf-8") as meminfo:
+              for line in meminfo:
+                  key, raw_value = line.split(":", 1)
+                  values[key] = int(raw_value.strip().split()[0])
+
+          total_kb = values["MemTotal"]
+          available_kb = values.get("MemAvailable", 0)
+          used_kb = total_kb - available_kb
+          return {
+              "total_mb": round(total_kb / 1024, 2),
+              "used_mb": round(used_kb / 1024, 2),
+              "available_mb": round(available_kb / 1024, 2),
+              "used_percent": round((used_kb / total_kb) * 100, 2),
+          }
+
+
+      def disk_stats():
+          usage = shutil.disk_usage("/")
+          return {
+              "total_gb": round(usage.total / (1024 ** 3), 2),
+              "used_gb": round(usage.used / (1024 ** 3), 2),
+              "free_gb": round(usage.free / (1024 ** 3), 2),
+              "used_percent": round((usage.used / usage.total) * 100, 2),
+          }
+
+
+      def network_stats():
+          totals = {"rx_bytes": 0, "tx_bytes": 0}
+          with open("/proc/net/dev", "r", encoding="utf-8") as netdev:
+              for line in netdev.readlines()[2:]:
+                  interface, raw_values = line.split(":", 1)
+                  if interface.strip() == "lo":
+                      continue
+                  values = raw_values.split()
+                  totals["rx_bytes"] += int(values[0])
+                  totals["tx_bytes"] += int(values[8])
+          return totals
+
+
+      def uptime_seconds():
+          with open("/proc/uptime", "r", encoding="utf-8") as uptime_file:
+              return round(float(uptime_file.read().split()[0]), 2)
+
+
+      def process_count():
+          return sum(1 for entry in os.listdir("/proc") if entry.isdigit())
+
+
+      def collect_payload():
+          instance_id = "unknown"
+          try:
+              instance_id = get_metadata("instance-id")
+          except urllib.error.URLError:
+              pass
+
+          return {
+              "thing_name": THING_NAME,
+              "instance_id": instance_id,
+              "ts": int(time.time()),
+              "timestamp": datetime.now(timezone.utc).isoformat(),
+              "cpu_percent": cpu_percent(),
+              "memory": memory_stats(),
+              "disk": disk_stats(),
+              "network": network_stats(),
+              "load_average": {
+                  "1m": round(os.getloadavg()[0], 2),
+                  "5m": round(os.getloadavg()[1], 2),
+                  "15m": round(os.getloadavg()[2], 2),
+              },
+              "uptime_seconds": uptime_seconds(),
+              "process_count": process_count(),
+              "battery": {
+                  "status": "not_applicable",
+                  "reason": "EC2 instances do not expose a hardware battery sensor",
+              },
+          }
+
+
+      def publish(payload):
+          PAYLOAD_PATH.write_text(json.dumps(payload), encoding="utf-8")
+          subprocess.run(
+              [
+                  "aws",
+                  "iot-data",
+                  "publish",
+                  "--region",
+                  AWS_REGION,
+                  "--endpoint-url",
+                  IOT_DATA_ENDPOINT,
+                  "--topic",
+                  IOT_TOPIC,
+                  "--cli-binary-format",
+                  "raw-in-base64-out",
+                  "--payload",
+                  f"fileb://{PAYLOAD_PATH}",
+              ],
+              check=True,
+          )
+
+
+      if __name__ == "__main__":
+          publish(collect_payload())
+
+  - path: /etc/systemd/system/ec2-iot-metrics.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Publish EC2 metrics to AWS IoT Core
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/python3 /opt/ec2-iot/publish_metrics.py
+
+  - path: /etc/systemd/system/ec2-iot-metrics.timer
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Run EC2 metrics publisher on a schedule
+
+      [Timer]
+      OnBootSec=1min
+      OnUnitActiveSec=${telemetry_interval_seconds}s
+      AccuracySec=15s
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now ec2-iot-metrics.timer
+  - systemctl start ec2-iot-metrics.service

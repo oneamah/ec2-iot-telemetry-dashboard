@@ -1,0 +1,71 @@
+<main class="shell">
+  <section class="hero">
+    <p class="eyebrow">AWS Telemetry Dashboard</p>
+    <h1>Angular on S3 calling API Gateway for EC2 IoT metrics</h1>
+    <p class="lede">
+      This static Angular app is designed to be deployed to S3 and fetch the latest EC2 telemetry records from a Lambda-backed HTTP API.
+    </p>
+    <div class="actions">
+      <button type="button" (click)="loadMetrics()">Refresh Data</button>
+      <span class="api">API: {{ apiBaseUrl }}</span>
+    </div>
+  </section>
+
+  <section *ngIf="loading" class="panel state">Loading telemetry...</section>
+  <section *ngIf="error" class="panel state error">{{ error }}</section>
+
+  <section *ngIf="!loading && !error" class="grid">
+    <article class="panel summary">
+      <h2>Source</h2>
+      <p><strong>Thing:</strong> {{ thingName || 'unknown' }}</p>
+      <p><strong>Records:</strong> {{ metrics.length }}</p>
+      <p><strong>Latest instance:</strong> {{ metrics[0].instance_id ?? 'n/a' }}</p>
+    </article>
+
+    <article class="panel latest" *ngIf="metrics.length">
+      <h2>Latest Sample</h2>
+      <div class="stats">
+        <div>
+          <span>CPU</span>
+          <strong>{{ metrics[0].cpu_percent }}%</strong>
+        </div>
+        <div>
+          <span>Memory</span>
+          <strong>{{ metrics[0].memory?.used_percent ?? 'n/a' }}%</strong>
+        </div>
+        <div>
+          <span>Disk</span>
+          <strong>{{ metrics[0].disk?.used_percent ?? 'n/a' }}%</strong>
+        </div>
+        <div>
+          <span>Load (1m)</span>
+          <strong>{{ metrics[0].load_average?.['1m'] ?? 'n/a' }}</strong>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <section *ngIf="!loading && !error && metrics.length" class="panel table-panel">
+    <h2>Recent Metrics</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>CPU %</th>
+          <th>Memory %</th>
+          <th>Disk %</th>
+          <th>Memory MB</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let metric of metrics; trackBy: trackByTimestamp">
+          <td>{{ metric.timestamp | date: 'medium' }}</td>
+          <td>{{ metric.cpu_percent }}</td>
+          <td>{{ metric.memory?.used_percent ?? 'n/a' }}</td>
+          <td>{{ metric.disk?.used_percent ?? 'n/a' }}</td>
+          <td>{{ metric.memory?.used_mb ?? 'n/a' }} / {{ metric.memory?.total_mb ?? 'n/a' }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+</main>
