@@ -1,0 +1,62 @@
+flowchart LR
+    classDef user fill:#fff7d6,stroke:#f59e0b,stroke-width:1.5,color:#111827;
+    classDef service fill:#fff5e6,stroke:#ff9900,stroke-width:1.8,color:#232f3e;
+    classDef compute fill:#fff7ed,stroke:#ea580c,stroke-width:1.8,color:#111827;
+    classDef store fill:#eef6ff,stroke:#2563eb,stroke-width:1.8,color:#111827;
+    classDef note fill:#f8fafc,stroke:#94a3b8,stroke-dasharray: 5 5,color:#334155;
+    classDef border fill:#ffffff,stroke:#6b7280,stroke-width:1.5,color:#111827;
+
+    U1[Web Client]:::user
+    U2[Web Client]:::user
+    U3[Web Client]:::user
+
+    Viewer1[Operations]:::user
+    Viewer2[Dashboard]:::user
+    Viewer3[Browser User]:::user
+
+    subgraph AWS[AWS]
+        direction TB
+
+        subgraph TopRow[ ]
+            direction LR
+            S3[S3 Static Website\nAngular Dashboard]:::store
+            APIGW[API Gateway]:::service
+            Reader[Lambda\nMetrics API]:::service
+        end
+
+        subgraph CenterRow[ ]
+            direction LR
+            IoT[AWS IoT Core]:::service
+            subgraph InstanceBox[Instances]
+                direction TB
+                EC2[EC2 Instance]:::compute
+                Metrics[CPU\nMemory\nDisk\nLoad\nNetwork]:::note
+            end
+            DB[(DynamoDB)]:::store
+        end
+
+        subgraph BottomRow[ ]
+            direction LR
+            IAM[IAM Role\nPublish Permission]:::border
+            Rule[IoT Topic Rule]:::service
+            Ingest[Lambda\nMetrics Ingest]:::service
+        end
+
+        Metrics --> EC2
+        EC2 -->|Publish telemetry| IoT
+        IoT --> Rule
+        Rule --> Ingest
+        Ingest -->|Store metrics| DB
+        Reader -->|Read metrics| DB
+        S3 -->|Fetch /metrics| APIGW
+        APIGW --> Reader
+        IAM -. authorizes .-> IoT
+    end
+
+    U1 -->|Open website| S3
+    U2 -->|Open website| S3
+    U3 -->|Open website| S3
+
+    S3 --> Viewer1
+    S3 --> Viewer2
+    S3 --> Viewer3
