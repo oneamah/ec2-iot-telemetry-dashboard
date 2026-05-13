@@ -89,13 +89,13 @@ Set-Location h:\aws\iot\terraform
 aws s3 sync ../frontend/dist/telemetry-web/browser s3://<frontend_bucket_name> --delete
 ```
 
-Set the API base URL in [frontend/src/environments/environment.prod.ts](/h:/aws/iot/frontend/src/environments/environment.prod.ts) before the final frontend build.
+Set the API base URL in [frontend/src/environments/environment.prod.ts](./frontend/src/environments/environment.prod.ts) before the final frontend build.
 
 ## Implementation Notes
 
-- [terraform/cloud-config.yaml](/h:/aws/iot/terraform/cloud-config.yaml) bootstraps the EC2 publisher and systemd timer.
-- [terraform/lambda_function.py](/h:/aws/iot/terraform/lambda_function.py) stores both the raw payload and flattened telemetry fields in DynamoDB.
-- [terraform/lambda_api_function.py](/h:/aws/iot/terraform/lambda_api_function.py) normalizes records for the dashboard response.
+- [terraform/cloud-config.yaml](./terraform/cloud-config.yaml) bootstraps the EC2 publisher and systemd timer.
+- [terraform/lambda_function.py](./terraform/lambda_function.py) stores both the raw payload and flattened telemetry fields in DynamoDB.
+- [terraform/lambda_api_function.py](./terraform/lambda_api_function.py) normalizes records for the dashboard response.
 - The stack uses IAM-based publishing from EC2 to AWS IoT Core rather than device certificates.
 
 ## Verification
